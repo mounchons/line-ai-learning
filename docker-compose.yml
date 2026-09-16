@@ -1,0 +1,91 @@
+# n8n 2.39.5 + PostgreSQL 18
+#
+#   docker compose up -d
+#
+#   n8n UI        -> http://localhost:5679
+#   DB from host  -> localhost:5689  (user/db from .env)
+#   LINE MCP      -> http://line-mcp:8000/mcp  (inside the compose network only)
+name: line-ai-learning
+
+services:
+  postgres:
+    image: postgres:18
+    container_name: n8n-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      # host 5689 -> container 5432, so this does not clash with a local
+      # PostgreSQL already listening on 5432.
+      - "5689:5432"
+    volumes:
+      # PostgreSQL 18 images moved PGDATA to /var/lib/postgresql/18/docker and
+      # declare VOLUME /var/lib/postgresql. Mount that parent directory, NOT
+      # /var/lib/postgresql/data - on 18 that path is unused and the real data
+      # would end up in an anonymous volume.
+      - db_storage:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  n8n:
+    image: n8nio/n8n:2.39.5
+    container_name: n8n
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      # Container-to-container port. Keep 5432 here: 5689 is only the host-side
+      # mapping and does not exist inside the compose network.
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_POSTGRESDB_SCHEMA: public
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
+      TZ: ${GENERIC_TIMEZONE}
+      # URL the browser uses to reach this instance. Without these n8n
+      # advertises http://localhost:5678, so the editor chat ("When chat
+      # message received") POSTs to /webhook-test on port 5678 - which here is
+      # a different n8n instance - and shows "Failed to receive response".
+      # Must match the host side of the port mapping below. Keep N8N_PORT at
+      # its default 5678: only the advertised URL changes, not the listen port.
+      WEBHOOK_URL: http://localhost:5679/
+      N8N_EDITOR_BASE_URL: http://localhost:5679/
+    ports:
+      # host 5679 -> container 5678, so this does not clash with another n8n
+      # instance already bound to 5678.
+      - "5679:5678"
+    volumes:
+      # Named volume, not a Windows bind mount: n8n 2.0 defaults
+      # N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true and requires 0600 on the
+      # settings file, which an NTFS bind mount cannot provide.
+      - n8n_storage:/home/node/.n8n
+
+  line-mcp:
+    # LINE Bot MCP server behind a stdio -> HTTP Streamable bridge (see
+    # line-mcp/Dockerfile). In n8n add an "MCP Client Tool" to an AI Agent with
+    # Endpoint http://line-mcp:8000/mcp and Server Transport "HTTP Streamable".
+    build: ./line-mcp
+    image: line-ai-learning-line-mcp:0.5.0
+    container_name: line-mcp
+    restart: unless-stopped
+    environment:
+      CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN:?set LINE_CHANNEL_ACCESS_TOKEN in .env}
+      # DESTINATION_USER_ID deliberately unset: every push/get_profile call must
+      # pass userId (e.g. from the n8n form), so nothing silently goes to a
+      # fixed default recipient.
+    # No host port on purpose: the endpoint has no auth and can push/broadcast
+    # as the LINE Official Account. n8n reaches it over the compose network.
+
+volumes:
+  db_storage:
+  n8n_storage:

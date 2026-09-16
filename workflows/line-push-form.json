@@ -1,0 +1,113 @@
+{
+  "id": "cC7Ln0tDvwO5IKiH",
+  "name": "LINE Push Form",
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "ff910031-5313-449d-ac19-00eedb9a586e",
+      "name": "LINE Push Form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        -400,
+        0
+      ],
+      "webhookId": "f90ad35c-445b-4ef6-8932-c27139311692",
+      "parameters": {
+        "authentication": "none",
+        "formTitle": "ส่งข้อความ LINE",
+        "formDescription": "กรอก LINE userId ของผู้รับ (ขึ้นต้นด้วย U ตามด้วย 32 ตัวอักษร) และข้อความที่ต้องการส่ง",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "LINE userId",
+              "fieldName": "userId",
+              "fieldType": "text",
+              "placeholder": "U1234567890abcdef1234567890abcdef",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "ข้อความ",
+              "fieldName": "text",
+              "fieldType": "textarea",
+              "placeholder": "สูงสุด 5000 ตัวอักษร",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "path": "line-push",
+          "buttonLabel": "ส่ง"
+        }
+      }
+    },
+    {
+      "id": "b2934492-f676-4338-abdc-d43edbcca781",
+      "name": "Push LINE Message",
+      "type": "@n8n/n8n-nodes-langchain.mcpClient",
+      "typeVersion": 1.1,
+      "position": [
+        -160,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "endpointUrl": "http://line-mcp:8000/mcp",
+        "serverTransport": "httpStreamable",
+        "authentication": "none",
+        "tool": {
+          "__rl": true,
+          "mode": "id",
+          "value": "push_text_message"
+        },
+        "inputMode": "json",
+        "jsonInput": "={{ ({ userId: $json.userId.trim(), message: { type: \"text\", text: $json.text } }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "b602aed8-f76f-4864-8dd9-2616a658552d",
+      "name": "Result",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        80,
+        0
+      ],
+      "webhookId": "ccfa48c4-494d-4c9f-a341-b655ca7febf4",
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "text",
+        "completionTitle": "={{ $json.error ? \"ส่งไม่สำเร็จ\" : \"ส่งข้อความแล้ว\" }}",
+        "completionMessage": "={{ $json.error ? ($json.error.message ?? $json.error) : \"ส่งถึง \" + $(\"LINE Push Form\").item.json.userId.trim() + \" เรียบร้อย\" }}"
+      }
+    }
+  ],
+  "connections": {
+    "LINE Push Form": {
+      "main": [
+        [
+          {
+            "node": "Push LINE Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push LINE Message": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
