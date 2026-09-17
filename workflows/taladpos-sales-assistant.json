@@ -1,0 +1,491 @@
+{
+  "id": "TaladPosSalesAi1",
+  "name": "TaladPOS Sales Assistant",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "3d7eba03-ca00-45ec-88e0-23642974c517",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1300,
+        -620
+      ],
+      "parameters": {
+        "width": 760,
+        "height": 560,
+        "color": 5,
+        "content": "## TaladPOS Sales Assistant (ตัวอย่าง AI ช่วยขาย)\nAI Agent คุยกับลูกค้า โดยเรียก TaladPOS API ผ่าน tool: สินค้า/ราคา/สต็อก, โปรลด %, โปรซื้อครบแถม/ลด, สินค้าขายดี 30 วัน และคิดราคาตะกร้าจริงด้วย `POST /api/v1/sales/preview` (ไม่บันทึกการขาย ไม่ตัดสต็อก)\n\nคู่มือเต็ม: `workflows/taladpos-sales-assistant.md`\n\n### ตั้งค่าก่อนใช้ (แก้ที่ node **Config** จุดเดียว)\n**apiBaseUrl ห้ามใช้ `localhost`** เพราะ n8n รันใน container — `localhost` ในนั้นคือตัว n8n เอง ใช้อย่างใดอย่างหนึ่ง:\n- `http://host.docker.internal:5054` (Docker Desktop)\n- `http://<IP เครื่อง>:5054` เช่น `http://192.168.1.50:5054`\n\n**หา IP เครื่อง**\n- Windows: PowerShell → `ipconfig` → เลือก adapter ที่มี *Default Gateway* (Wi-Fi / Ethernet) → ค่า *IPv4 Address* (ข้าม vEthernet, WSL, VirtualBox)\n- macOS: `ipconfig getifaddr en0` · Linux: `hostname -I`\n\n**พอร์ต** = เลขฝั่งซ้ายของ `ports:` ใน compose ของ API เช่น `\"5054:8080\"` → 5054\n\n**ทดสอบจาก container n8n**\n`docker exec n8n wget -S -O- http://<IP>:5054/api/v1/products`\nได้ `401 Unauthorized` = ต่อถึง API แล้ว · timeout / refused = IP, พอร์ต หรือ Windows Firewall\n\nบัญชี `manager` จำเป็น เพราะ promotions, conditional-promotions และ reports เปิดให้ Manager เท่านั้น"
+      }
+    },
+    {
+      "id": "cc4851e9-209f-40a9-8ffc-3aeffd5ed05e",
+      "name": "When chat message received",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        -1060,
+        0
+      ],
+      "webhookId": "834ba594-e4d4-4016-be70-5a189a3b15d9",
+      "parameters": {
+        "options": {
+          "responseMode": "lastNode"
+        }
+      }
+    },
+    {
+      "id": "04127e95-5b8e-4a05-8a23-7e7e746c098a",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -840,
+        0
+      ],
+      "notes": "apiBaseUrl: host.docker.internal or the host machine IP, never localhost (see sticky note). manager login is required for promotions and reports.",
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cbf85fe4-5747-4054-924d-036549f1fa75",
+              "name": "apiBaseUrl",
+              "value": "http://host.docker.internal:5054",
+              "type": "string"
+            },
+            {
+              "id": "3b980c0b-1d75-4271-9f5e-55d8de360335",
+              "name": "username",
+              "value": "manager",
+              "type": "string"
+            },
+            {
+              "id": "9878cae9-fa9c-4ffc-9d9a-4ccc5e1cd6da",
+              "name": "password",
+              "value": "Manager123!",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "d0748e48-386e-48fb-a5d6-413aa08540f8",
+      "name": "Login TaladPOS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -620,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.apiBaseUrl.replace(/\\/+$/, '') }}/api/v1/auth/login",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ username: $json.username, password: $json.password }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "89081807-d03f-4153-b213-8f84355db6b3",
+      "name": "Session + Token",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -400,
+        0
+      ],
+      "notes": "Login replaces $json, so chatInput and sessionId (needed by the agent and Simple Memory) are copied back here together with the JWT.",
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "2bf95848-2598-4c17-a944-b8e726dd8418",
+              "name": "token",
+              "value": "={{ $json.token }}",
+              "type": "string"
+            },
+            {
+              "id": "ec4709c0-1b0e-423e-9bc1-f310c53b67ce",
+              "name": "apiBaseUrl",
+              "value": "={{ $('Config').item.json.apiBaseUrl.replace(/\\/+$/, '') }}",
+              "type": "string"
+            },
+            {
+              "id": "c30a5a82-91a6-4dbe-ad05-401534b6bc3d",
+              "name": "chatInput",
+              "value": "={{ $('When chat message received').item.json.chatInput }}",
+              "type": "string"
+            },
+            {
+              "id": "64daf866-2931-461d-9108-4c9ee7799f42",
+              "name": "sessionId",
+              "value": "={{ $('When chat message received').item.json.sessionId }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "044d90d7-de04-4ba8-a455-96b6e183f3e7",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        -100,
+        0
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.chatInput }}",
+        "options": {
+          "systemMessage": "=You are \"น้องตลาด\", a friendly salesperson for the TaladPOS fruit shop, chatting with a customer.\nToday is {{ $today.toFormat('yyyy-MM-dd') }}. All prices are in Thai baht.\n\nLanguage\n- Always reply in Thai, polite and concise, ending sentences with ค่ะ. Write prices like 45 บาท.\n\nData rules - never guess\n- Product names, prices and stock come ONLY from Get_Products. Promotions come ONLY from Get_Promotions and Get_Bundle_Promotions. Best sellers come ONLY from Get_Best_Sellers. Never invent products, prices, discounts or ids.\n- Get_Promotions gives productId but no product name: match it to the id from Get_Products. scope = Bill (productId null) is a discount on the whole bill.\n- appliesToMembersOnly = true means members only: label it สำหรับสมาชิก and do not include it in a price for a non-member.\n- Discounts never stack: if several promotions fit the same item or the same bill, the shop uses only the one with the biggest discount.\n- NEVER calculate a price, discount or total yourself - promotions change what the customer pays. Whenever the customer mentions a quantity or asks how much to pay, you MUST call Get_Products for the ids and then Price_Cart, and quote Price_Cart's totalAmount, discountAmount and appliedPromotions exactly. Price_Cart prices a non-member.\n- If some requested items are out of stock, tell the customer, remove them from the basket and STILL call Price_Cart for the remaining in-stock items before giving any price. An answer that states a price without calling Price_Cart in this turn is wrong.\n- If Price_Cart returns unclaimedGifts, tell the customer which free gift they have earned.\n- If a tool returns an error, say the shop system is temporarily unavailable. Do not answer from memory.\n\nSelling\n- Recommend only items with isOutOfStock = false; for an out-of-stock item, apologise and suggest an in-stock alternative.\n- Do not reveal exact stock counts: say มีสินค้า, เหลือไม่มาก (isLowStock = true) or หมดชั่วคราว.\n- For recommendations, combine Get_Best_Sellers with active promotions, and suggest a bundle deal when the basket is close to qualifying.\n- Never reveal sales amounts, revenue, staff or member data. Best-seller data is only for recommending products.\n- You cannot take orders or payments. When the customer is ready, summarise the basket and total from Price_Cart and invite them to pay at the counter."
+        }
+      }
+    },
+    {
+      "id": "7a3c1f52-6b0e-4d8a-9c21-5e4f8b7d3a10",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -460,
+        260
+      ],
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash-lite",
+        "options": {}
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "vJ373ZTbDLrJbvUo",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "id": "b5e2d9a4-1c7f-4e3b-8a06-2d9c4f1e7b53",
+      "name": "Simple Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        -300,
+        260
+      ],
+      "parameters": {
+        "contextWindowLength": 10
+      }
+    },
+    {
+      "id": "e8f1a6c3-4b2d-4f9e-a7c5-6d3b8e2f1a94",
+      "name": "Get Products",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.2,
+      "position": [
+        -140,
+        260
+      ],
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Search the shop's products. Returns items[] with id (needed by Price_Cart), name, price = list price in baht BEFORE promotions, stockQuantity, isLowStock and isOutOfStock. To tell a customer what they will pay for a quantity, call Price_Cart - never multiply price yourself. Pass an empty search to list every product.",
+        "url": "={{ $('Session + Token').first().json.apiBaseUrl }}/api/v1/products",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "search",
+              "value": "={{ $fromAI('search', 'Part of a product name in Thai, for example มะม่วง. Empty string lists all products.', 'string', '') }}"
+            },
+            {
+              "name": "pageSize",
+              "value": "100"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Session + Token').first().json.token }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "f2c7b8d1-9e4a-4c6f-b3d2-7a1e5c9f4b86",
+      "name": "Get Promotions",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.2,
+      "position": [
+        20,
+        260
+      ],
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "List percentage-discount promotions active today. scope Item = discountPercentage off one product (productId, match it with Get_Products), scope Bill = discountPercentage off the whole bill. appliesToMembersOnly marks member-only deals. Includes startDate and endDate.",
+        "url": "={{ $('Session + Token').first().json.apiBaseUrl }}/api/v1/promotions",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "activeOnly",
+              "value": "true"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Session + Token').first().json.token }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a9d4e7f2-3c8b-4a1d-9e6f-8b2c5d7a3e19",
+      "name": "Get Bundle Promotions",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.2,
+      "position": [
+        180,
+        260
+      ],
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "List buy-together promotions active today, such as buy 2 get 1 free or buy a pair get a discount. Each has name, a ready-to-use Thai description, conditionLines with productName and minimumQuantity, reward with a gift product or discountPercentage, appliesToMembersOnly and endDate. Only offer ones where isUsable is true.",
+        "url": "={{ $('Session + Token').first().json.apiBaseUrl }}/api/v1/conditional-promotions",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "activeOnly",
+              "value": "true"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Session + Token').first().json.token }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c6b1f8e3-7d2a-4b9c-a5e4-1f8d3c6b2a75",
+      "name": "Get Best Sellers",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.2,
+      "position": [
+        340,
+        260
+      ],
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Top 10 best-selling products of the last 30 days, sorted by quantitySold. Use it to recommend popular items. totalSalesAmount is internal and must never be told to the customer.",
+        "url": "={{ $('Session + Token').first().json.apiBaseUrl }}/api/v1/reports/best-selling-products",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "from",
+              "value": "={{ $today.minus({ days: 30 }).toFormat('yyyy-MM-dd') }}"
+            },
+            {
+              "name": "to",
+              "value": "={{ $today.toFormat('yyyy-MM-dd') }}"
+            },
+            {
+              "name": "limit",
+              "value": "10"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Session + Token').first().json.token }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d3e8a2b7-5f1c-4d6e-b9a3-4c7e1f5d8b62",
+      "name": "Price Cart",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        260
+      ],
+      "notes": "POST /sales/preview only prices the basket - it does not record a sale or change stock.",
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Calculate the exact price of a basket with every promotion the shop would apply, for a non-member. Does NOT create an order. Returns lines, appliedPromotions, unclaimedGifts, subtotalAmount, discountAmount and totalAmount. Get product ids from Get_Products first.",
+        "method": "POST",
+        "url": "={{ $('Session + Token').first().json.apiBaseUrl }}/api/v1/sales/preview",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Session + Token').first().json.token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ memberId: null, lineItems: JSON.parse($fromAI('lineItemsJson', 'JSON array text of the basket lines. Each line has productId = the id from Get_Products and quantity = whole number of at least 1. Example: [{\"productId\":\"4036fb39-a055-4bf7-b14b-3890d5086085\",\"quantity\":2}]', 'string')) }) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Login TaladPOS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Login TaladPOS": {
+      "main": [
+        [
+          {
+            "node": "Session + Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session + Token": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Products": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Promotions": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Bundle Promotions": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Best Sellers": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Price Cart": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
