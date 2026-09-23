@@ -85,6 +85,10 @@ services:
       # fixed default recipient.
     # No host port on purpose: the endpoint has no auth and can push/broadcast
     # as the LINE Official Account. n8n reaches it over the compose network.
+    #
+    # Broadcasting is reachable but gated: the agent can only call it through
+    # the "LINE MCP Call (tool)" sub-workflow, which refuses unless
+    # allowBroadcast is true in the parent workflow's "LINE settings" node.
 
 volumes:
   db_storage:

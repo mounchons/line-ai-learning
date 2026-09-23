@@ -1,0 +1,151 @@
+{
+  "id": "LnMcpCallTool1",
+  "name": "LINE MCP Call (tool)",
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "2b3c4d5e-0001-4000-8000-000000000001",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -660,
+        0
+      ],
+      "notes": "Escape hatch for the LINE MCP tools whose JSON schema Gemini cannot parse and that no dedicated tool covers: create_rich_menu and the two broadcast tools.",
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "tool",
+              "type": "string"
+            },
+            {
+              "name": "argsJson",
+              "type": "string"
+            },
+            {
+              "name": "userId",
+              "type": "string"
+            },
+            {
+              "name": "allowBroadcast",
+              "type": "boolean"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2b3c4d5e-0002-4000-8000-000000000002",
+      "name": "Validate Call",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        0
+      ],
+      "notes": "Allowlists the tool, gates broadcasting behind a workflow switch, and parses the model's argument JSON.",
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Only tools that no other node covers. Everything else is reachable either\n// natively (const-free schemas on the \"LINE MCP\" node) or through\n// send_line_text / send_line_flex, and routing those here would just give the\n// model a second, worse way to do the same thing.\nconst ALLOWED = ['create_rich_menu', 'broadcast_text_message', 'broadcast_flex_message'];\n\nconst tool = String($json.tool ?? '').trim();\nconst userId = String($json.userId ?? '').trim();\nconst allowBroadcast = $json.allowBroadcast === true || $json.allowBroadcast === 'true';\nconst raw = $json.argsJson;\n\nif (!ALLOWED.includes(tool)) {\n  throw new Error(`Tool \"${tool}\" is not callable here. This tool only handles: ${ALLOWED.join(', ')}. Use send_line_text for text, send_line_flex for cards, and the LINE MCP tools for profile and rich menu queries.`);\n}\n\n// Broadcast reaches every follower and cannot be recalled. The switch lives in\n// the workflow, so enabling it is a human action, not a model decision.\nif (tool.startsWith('broadcast_') && !allowBroadcast) {\n  throw new Error('Broadcasting is disabled. It sends to every follower of the Official Account and cannot be undone. To enable it, set \"allowBroadcast\" to true in the \"LINE settings\" node of the parent workflow.');\n}\n\nlet args;\nif (raw && typeof raw === 'object') {\n  args = raw;\n} else {\n  let text = String(raw ?? '').trim();\n  text = text.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/, '').trim();\n  if (!text) {\n    args = {};\n  } else {\n    try {\n      args = JSON.parse(text);\n    } catch (e) {\n      throw new Error(`argsJson is not valid JSON (${e.message}). Return the arguments object as raw JSON only - no markdown fence, no trailing comma.`);\n    }\n  }\n}\n\nif (!args || typeof args !== 'object' || Array.isArray(args)) {\n  throw new Error('argsJson must be a JSON object holding the tool arguments.');\n}\n\n// push_* tools take a recipient; the workflow owns that value, never the model.\nif (tool.startsWith('push_')) {\n  if (!/^U[0-9a-f]{32}$/.test(userId)) {\n    throw new Error(`Invalid LINE userId: \"${userId}\". Set it in the \"LINE settings\" node of the parent workflow.`);\n  }\n  args.userId = userId;\n} else {\n  // broadcast_* and create_rich_menu have no recipient - drop a stray one.\n  delete args.userId;\n}\n\nif (tool === 'create_rich_menu') {\n  if (!args.chatBarText || !Array.isArray(args.actions)) {\n    throw new Error('create_rich_menu needs \"chatBarText\" (string) and \"actions\" (array of 1-6 action objects).');\n  }\n  if (args.actions.length < 1 || args.actions.length > 6) {\n    throw new Error(`create_rich_menu accepts 1-6 actions, got ${args.actions.length}.`);\n  }\n}\n\nif (tool === 'broadcast_text_message' && !args.message) {\n  throw new Error('broadcast_text_message needs a \"message\" object: { \"type\": \"text\", \"text\": \"...\" }.');\n}\nif (tool === 'broadcast_flex_message' && !args.message) {\n  throw new Error('broadcast_flex_message needs a \"message\" object: { \"type\": \"flex\", \"altText\": \"...\", \"contents\": { \"type\": \"bubble\", ... } }.');\n}\n\nreturn { json: { tool, args } };\n"
+      }
+    },
+    {
+      "id": "2b3c4d5e-0003-4000-8000-000000000003",
+      "name": "Call LINE MCP",
+      "type": "@n8n/n8n-nodes-langchain.mcpClient",
+      "typeVersion": 1.1,
+      "position": [
+        -180,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "tool.value is an expression: the MCP Client node reads it per item, so one node can dispatch to any tool name.",
+      "parameters": {
+        "endpointUrl": "http://line-mcp:8000/mcp",
+        "serverTransport": "httpStreamable",
+        "authentication": "none",
+        "tool": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.tool }}"
+        },
+        "inputMode": "json",
+        "jsonInput": "={{ $json.args }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "2b3c4d5e-0004-4000-8000-000000000004",
+      "name": "Tool Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        60,
+        0
+      ],
+      "notes": "Last node of the sub-workflow: this is what the agent receives as the tool result.",
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "g1",
+              "name": "ok",
+              "value": "={{ !$json.error }}",
+              "type": "boolean"
+            },
+            {
+              "id": "g2",
+              "name": "result",
+              "value": "={{ $json.error ? ('Failed: ' + ($json.error.message ?? JSON.stringify($json.error))) : JSON.stringify($json.content ?? $json) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Validate Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Call": {
+      "main": [
+        [
+          {
+            "node": "Call LINE MCP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call LINE MCP": {
+      "main": [
+        [
+          {
+            "node": "Tool Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

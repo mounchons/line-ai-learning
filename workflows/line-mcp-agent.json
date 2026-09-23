@@ -1,80 +1,52 @@
 {
-  "id": "wsoWQZifni8LA2B4",
+  "id": "D040YFvnbPnBhwHc",
   "name": "LINE MCP Agent",
   "active": false,
-  "settings": {
-    "executionOrder": "v1"
-  },
   "nodes": [
     {
-      "id": "77ddd818-ec04-45bd-8fb1-b3dde18991f8",
-      "name": "When chat message received",
-      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
-      "typeVersion": 1.5,
-      "position": [
-        -624,
-        -64
-      ],
-      "webhookId": "c31a3eeb-5c9b-45d0-a654-9250c06a8702",
       "parameters": {
         "options": {
           "responseMode": "lastNode"
         }
-      }
-    },
-    {
-      "id": "78d58b62-0c02-429b-8576-a8b6c82a7616",
-      "name": "LINE userId",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.5,
+      },
+      "id": "bcaa1b06-2ea6-42f6-b685-6ae2d95412de",
+      "name": "When chat message received",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.5,
       "position": [
-        -352,
-        -64
+        -416,
+        240
       ],
-      "notes": "Fill userId with the recipient LINE userId (U + 32 hex chars). Leave empty to have the agent ask for it in chat.",
-      "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "d2b92d89-f30c-447f-90ac-950d3fd8416e",
-              "name": "userId",
-              "value": "",
-              "type": "string"
-            }
-          ]
-        },
-        "includeOtherFields": true,
-        "options": {}
-      }
+      "webhookId": "c31a3eeb-5c9b-45d0-a654-9250c06a8702"
     },
     {
-      "id": "ee67224d-4c26-4dcf-a6d8-7b41aaa80163",
+      "parameters": {
+        "options": {
+          "systemMessage": "=You are an assistant that operates a LINE Official Account.\n- Reply to the user in Thai.\n- Recipient LINE userId: {{ ($json.userId || '').trim() || 'NOT SET' }}\n- Broadcasting enabled: {{ $json.allowBroadcast ? 'yes' : 'no' }}\n\nSending to the recipient (never pass a userId to these - they already know it):\n- send_line_text: plain text.\n- send_line_flex: a card. Prefer it whenever the content has structure - a price, a list, a link, an image, a button.\n\nOther operations:\n- get_profile takes a userId: use exactly the recipient userId above unless the user gives a different one. get_message_quota, get_follower_ids, get_rich_menu_list and cancel_rich_menu_default take no arguments; delete_rich_menu and set_rich_menu_default take a richMenuId from get_rich_menu_list.\n- line_mcp_call: rich menu creation and broadcasts.\n\nRules:\n- If the recipient userId is NOT SET, tell the user to fill it in the \"LINE settings\" node and do not send anything.\n- Before sending, show the exact content and ask the user to confirm.\n- A broadcast reaches every follower and cannot be recalled. Before calling it, say so and require the user to reply with the word \"broadcast\". If broadcasting is disabled above, tell the user to enable allowBroadcast in the \"LINE settings\" node instead of trying.\n- Report the tool result after every call. If a tool rejects your JSON, read the error, fix the JSON and retry once."
+        }
+      },
+      "id": "d07a7d14-d7fd-4270-891e-12669ff92ef3",
       "name": "AI Agent",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 2.2,
       "position": [
-        -64,
-        -64
-      ],
-      "parameters": {
-        "options": {
-          "systemMessage": "=You are an assistant that operates a LINE Official Account through the LINE MCP tools.\n- Reply to the user in Thai.\n- Recipient LINE userId: {{ ($json.userId || '').trim() || 'NOT SET' }}\n- If the recipient userId above is set, use exactly that value as userId for every tool call that needs one (push messages, get_profile) and do not ask the user for it. Use a different userId only if the user explicitly gives one in the chat.\n- If it is NOT SET and the user has not given one, ask for it (U + 32 hex chars) before calling the tool.\n- Before sending any message, show the exact text and the recipient userId, and ask the user to confirm.\n- Report the tool result (success or the error message) after every call."
-        }
-      }
+        208,
+        240
+      ]
     },
     {
-      "id": "c08d5536-077a-440a-aa8a-7851b473d907",
+      "parameters": {
+        "modelName": "models/gemini-3.1-flash-lite",
+        "options": {}
+      },
+      "id": "95b07170-9bc1-4b77-822f-7e209b680585",
       "name": "Google Gemini Chat Model",
       "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
       "typeVersion": 1,
       "position": [
-        -240,
-        144
+        32,
+        448
       ],
-      "parameters": {
-        "modelName": "models/gemini-2.5-flash-lite",
-        "options": {}
-      },
       "credentials": {
         "googlePalmApi": {
           "id": "vJ373ZTbDLrJbvUo",
@@ -83,38 +55,252 @@
       }
     },
     {
-      "id": "c5116303-fc5f-47cd-9a89-85d91b88f8a3",
+      "parameters": {
+        "contextWindowLength": 10
+      },
+      "id": "271c4493-ad81-4ebc-ad1b-69d63b8f0fdb",
       "name": "Simple Memory",
       "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
       "typeVersion": 1.3,
       "position": [
-        -64,
-        144
-      ],
-      "parameters": {
-        "contextWindowLength": 10
-      }
+        208,
+        448
+      ]
     },
     {
-      "id": "26d0186d-8351-4850-9ada-5a6c4fe156a9",
+      "parameters": {
+        "endpointUrl": "http://line-mcp:8000/mcp",
+        "include": "selected",
+        "includeTools": [
+          "get_profile",
+          "get_message_quota",
+          "get_follower_ids",
+          "get_rich_menu_list",
+          "delete_rich_menu",
+          "set_rich_menu_default",
+          "cancel_rich_menu_default"
+        ],
+        "options": {}
+      },
+      "id": "f3f8aefc-5886-48ca-99e0-4264f0a50a54",
       "name": "LINE MCP",
       "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
       "typeVersion": 1.4,
       "position": [
-        112,
+        384,
+        448
+      ],
+      "notes": "The seven LINE MCP tools whose JSON schema has no \"const\" keyword, so Gemini can parse them. The other five (push_text, push_flex, both broadcasts, create_rich_menu) use z.literal -> const and are reached through the send_line_text / send_line_flex / line_mcp_call sub-workflow tools instead."
+    },
+    {
+      "parameters": {
+        "description": "Send a plain text message to the LINE recipient already configured in this workflow. Input: text (the message to send, max 5000 characters). Do not pass a userId - the recipient is fixed.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "LnSendTxtTool01",
+          "cachedResultName": "LINE Send Text (tool)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "userId": "={{ $('LINE settings').item.json.userId }}",
+            "text": "={{ $fromAI('text', 'The message text to send to the LINE user', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "userId",
+              "displayName": "userId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
+      },
+      "id": "dc5ffa3f-b9ee-431a-a88e-04595d2173c8",
+      "name": "send_line_text",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        528,
+        448
+      ],
+      "notes": "userId comes from the 'LINE userId' node, not from the model."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d2b92d89-f30c-447f-90ac-950d3fd8416e",
+              "name": "userId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "a7e3c1f4-2b60-4d95-8c17-9f0e5a2b6d31",
+              "name": "allowBroadcast",
+              "value": false,
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "40224d5e-2bd8-4db8-8665-c5fbe0a5e204",
+      "name": "LINE settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -144,
+        240
+      ],
+      "notes": "userId: the recipient (U + 32 hex chars). allowBroadcast: leave false unless you really mean to message every follower - broadcasts cannot be recalled. The agent can read these but cannot change them."
+    },
+    {
+      "id": "c29d4e17-8b53-4f06-9a21-7d3e0b5c8f42",
+      "name": "send_line_flex",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        464,
         144
       ],
+      "notes": "Recipient and safety switches come from the 'LINE settings' node, not from the model.",
       "parameters": {
-        "endpointUrl": "http://line-mcp:8000/mcp",
-        "serverTransport": "httpStreamable",
-        "authentication": "none",
-        "include": "except",
-        "excludeTools": [
-          "broadcast_text_message",
-          "broadcast_flex_message",
-          "delete_rich_menu"
-        ],
-        "options": {}
+        "description": "Send a LINE Flex message (a card) to the recipient configured in this workflow. Use this for anything richer than plain text: product cards, receipts, menus, buttons, carousels.\nInputs:\n- altText: short preview text shown in the chat list and where Flex cannot render (1-400 chars).\n- contentsJson: the Flex CONTAINER as raw JSON (no markdown fence). Not the whole message - start at {\"type\":\"bubble\"} or {\"type\":\"carousel\"}.\nMinimal bubble:\n{\"type\":\"bubble\",\"body\":{\"type\":\"box\",\"layout\":\"vertical\",\"contents\":[{\"type\":\"text\",\"text\":\"Hello\",\"weight\":\"bold\",\"size\":\"lg\"},{\"type\":\"text\",\"text\":\"Details here\",\"wrap\":true}]},\"footer\":{\"type\":\"box\",\"layout\":\"vertical\",\"contents\":[{\"type\":\"button\",\"style\":\"primary\",\"action\":{\"type\":\"uri\",\"label\":\"Open\",\"uri\":\"https://example.com\"}}]}}\nRules the server enforces: header/hero/body/footer must each be a box; colors are #RRGGBB only; size is one of xxs xs sm md lg xl xxl 3xl 4xl 5xl; an action label is at most 20 chars; offsets and padding look like \"10px\"; a carousel holds 1-12 bubbles in its contents array. Do not pass a userId.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "LnSendFlexTl01",
+          "cachedResultName": "LINE Send Flex (tool)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "userId": "={{ $('LINE settings').item.json.userId }}",
+            "altText": "={{ $fromAI('altText', 'Short preview text for the card, 1-400 characters', 'string') }}",
+            "contentsJson": "={{ $fromAI('contentsJson', 'The LINE Flex container as raw JSON: a bubble or a carousel', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "userId",
+              "displayName": "userId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "altText",
+              "displayName": "altText",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "contentsJson",
+              "displayName": "contentsJson",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
+      }
+    },
+    {
+      "id": "d3ae5f28-9c64-4017-8b32-8e4f1c6d9a53",
+      "name": "line_mcp_call",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        144
+      ],
+      "notes": "Recipient and safety switches come from the 'LINE settings' node, not from the model.",
+      "parameters": {
+        "description": "Call a LINE MCP tool that has no dedicated tool here. Allowed tool names:\n- create_rich_menu: build the Official Account rich menu and set it as default. argsJson = {\"chatBarText\":\"Menu\",\"actions\":[{\"type\":\"message\",\"label\":\"Price\",\"text\":\"price\"}]} (1-6 actions; each is a LINE action object - message, uri or postback). The menu image is generated automatically.\n- broadcast_text_message: argsJson = {\"message\":{\"type\":\"text\",\"text\":\"...\"}}\n- broadcast_flex_message: argsJson = {\"message\":{\"type\":\"flex\",\"altText\":\"...\",\"contents\":{\"type\":\"bubble\"}}}\nBroadcasts go to EVERY follower and cannot be recalled; they are refused unless the workflow owner has enabled them. Never use this tool for ordinary messages - use send_line_text or send_line_flex. argsJson must be raw JSON, no markdown fence.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "LnMcpCallTool1",
+          "cachedResultName": "LINE MCP Call (tool)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "tool": "={{ $fromAI('tool', 'One of: create_rich_menu, broadcast_text_message, broadcast_flex_message', 'string') }}",
+            "argsJson": "={{ $fromAI('argsJson', 'The tool arguments as raw JSON', 'string') }}",
+            "userId": "={{ $('LINE settings').item.json.userId }}",
+            "allowBroadcast": "={{ $('LINE settings').item.json.allowBroadcast }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "tool",
+              "displayName": "tool",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "argsJson",
+              "displayName": "argsJson",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "userId",
+              "displayName": "userId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "allowBroadcast",
+              "displayName": "allowBroadcast",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "boolean"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        }
       }
     }
   ],
@@ -123,18 +309,7 @@
       "main": [
         [
           {
-            "node": "LINE userId",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "LINE userId": {
-      "main": [
-        [
-          {
-            "node": "AI Agent",
+            "node": "LINE settings",
             "type": "main",
             "index": 0
           }
@@ -173,6 +348,53 @@
           }
         ]
       ]
+    },
+    "send_line_text": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LINE settings": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "send_line_flex": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "line_mcp_call": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
     }
+  },
+  "settings": {
+    "executionOrder": "v1"
   }
 }

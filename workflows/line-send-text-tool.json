@@ -1,0 +1,141 @@
+{
+  "id": "LnSendTxtTool01",
+  "name": "LINE Send Text (tool)",
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "3a1f0d2e-7b41-4c8a-9f05-2c6b1d0e4a77",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -420,
+        0
+      ],
+      "notes": "Called by the 'send_line_text' tool on the LINE MCP Agent. userId is wired from the workflow, only text comes from the model.",
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "userId",
+              "type": "string"
+            },
+            {
+              "name": "text",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "6d2c9b18-0e5a-4f33-8a7d-51b93c4e2f10",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -180,
+        0
+      ],
+      "notes": "Fail fast with a message the agent can read back to the user, instead of letting the LINE API return a raw 400.",
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const userId = String($json.userId ?? '').trim();\nconst text = String($json.text ?? '').trim();\n\nif (!/^U[0-9a-f]{32}$/.test(userId)) {\n  throw new Error(`Invalid LINE userId: \"${userId}\". It must be U followed by 32 hex characters. Set it in the \"LINE settings\" node of the parent workflow.`);\n}\nif (!text) {\n  throw new Error('Message text is empty.');\n}\nif (text.length > 5000) {\n  throw new Error(`Message is ${text.length} characters, the LINE limit is 5000.`);\n}\n\nreturn { json: { userId, text } };"
+      }
+    },
+    {
+      "id": "9f4e7a26-c3b8-4d51-b0e2-7a8c5d139b44",
+      "name": "Push LINE Text",
+      "type": "@n8n/n8n-nodes-langchain.mcpClient",
+      "typeVersion": 1.1,
+      "position": [
+        60,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "Regular MCP Client node, not the MCP Client Tool: the arguments are built here, so the LLM never sees the push_text_message JSON schema.",
+      "parameters": {
+        "endpointUrl": "http://line-mcp:8000/mcp",
+        "serverTransport": "httpStreamable",
+        "authentication": "none",
+        "tool": {
+          "__rl": true,
+          "mode": "id",
+          "value": "push_text_message"
+        },
+        "inputMode": "json",
+        "jsonInput": "={{ ({ userId: $json.userId, message: { type: \"text\", text: $json.text } }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "b7c05e91-2f6d-48a0-9c13-6e4b8a207d55",
+      "name": "Tool Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        300,
+        0
+      ],
+      "notes": "Last node of the sub-workflow: this is what the agent receives as the tool result.",
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1c8d3f20-5a94-4b6e-8d71-0f2a9c6b3e18",
+              "name": "ok",
+              "value": "={{ !$json.error }}",
+              "type": "boolean"
+            },
+            {
+              "id": "2e9a4b31-6c05-4d7f-9e82-1a3b0d7c4f29",
+              "name": "result",
+              "value": "={{ $json.error ? ('Failed: ' + ($json.error.message ?? JSON.stringify($json.error))) : ('Sent to ' + $('Validate Input').item.json.userId) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Push LINE Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push LINE Text": {
+      "main": [
+        [
+          {
+            "node": "Tool Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

@@ -1,0 +1,145 @@
+{
+  "id": "LnSendFlexTl01",
+  "name": "LINE Send Flex (tool)",
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "1a2b3c4d-0001-4000-8000-000000000001",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -640,
+        0
+      ],
+      "notes": "Called by the 'send_line_flex' tool. userId is wired from the parent workflow; the model supplies altText and contentsJson.",
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "userId",
+              "type": "string"
+            },
+            {
+              "name": "altText",
+              "type": "string"
+            },
+            {
+              "name": "contentsJson",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "1a2b3c4d-0002-4000-8000-000000000002",
+      "name": "Parse Flex",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        0
+      ],
+      "notes": "The model hands over Flex JSON as a string. Parsing it here turns a malformed payload into a message the agent can act on, instead of a raw zod dump from the MCP server.",
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const userId = String($json.userId ?? '').trim();\nconst altText = String($json.altText ?? '').trim();\nconst raw = $json.contentsJson;\n\nif (!/^U[0-9a-f]{32}$/.test(userId)) {\n  throw new Error(`Invalid LINE userId: \"${userId}\". It must be U followed by 32 hex characters. Set it in the \"LINE settings\" node of the parent workflow.`);\n}\nif (!altText || altText.length > 400) {\n  throw new Error('altText is required and must be 1-400 characters. It is the preview text shown where Flex cannot render.');\n}\n\n// Models often wrap JSON in a markdown fence, and sometimes return an object\n// even though the tool schema asks for a string.\nlet contents;\nif (raw && typeof raw === 'object') {\n  contents = raw;\n} else {\n  let text = String(raw ?? '').trim();\n  text = text.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/, '').trim();\n  if (!text) {\n    throw new Error('contentsJson is empty. Provide a LINE Flex container as JSON.');\n  }\n  try {\n    contents = JSON.parse(text);\n  } catch (e) {\n    throw new Error(`contentsJson is not valid JSON (${e.message}). Return the Flex container as raw JSON only - no markdown fence, no trailing comma, all strings double-quoted.`);\n  }\n}\n\nif (!contents || typeof contents !== 'object' || Array.isArray(contents)) {\n  throw new Error('contentsJson must be a JSON object: the Flex container itself.');\n}\n\n// Accept a whole message object and unwrap it - a common model mistake.\nif (contents.type === 'flex' && contents.contents) {\n  contents = contents.contents;\n}\n\nif (contents.type !== 'bubble' && contents.type !== 'carousel') {\n  throw new Error(`Flex container type must be \"bubble\" or \"carousel\", got ${JSON.stringify(contents.type)}. Send the container only, not the whole message object.`);\n}\nif (contents.type === 'carousel') {\n  if (!Array.isArray(contents.contents) || contents.contents.length < 1) {\n    throw new Error('A carousel needs a non-empty \"contents\" array of bubbles.');\n  }\n  if (contents.contents.length > 12) {\n    throw new Error(`A carousel accepts at most 12 bubbles, got ${contents.contents.length}.`);\n  }\n}\n\nreturn { json: { userId, message: { type: 'flex', altText, contents } } };\n"
+      }
+    },
+    {
+      "id": "1a2b3c4d-0003-4000-8000-000000000003",
+      "name": "Push LINE Flex",
+      "type": "@n8n/n8n-nodes-langchain.mcpClient",
+      "typeVersion": 1.1,
+      "position": [
+        -160,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "Regular MCP Client node: arguments are built here, so the flex JSON schema (full of const/anyOf) never reaches the model.",
+      "parameters": {
+        "endpointUrl": "http://line-mcp:8000/mcp",
+        "serverTransport": "httpStreamable",
+        "authentication": "none",
+        "tool": {
+          "__rl": true,
+          "mode": "id",
+          "value": "push_flex_message"
+        },
+        "inputMode": "json",
+        "jsonInput": "={{ ({ userId: $json.userId, message: $json.message }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "1a2b3c4d-0004-4000-8000-000000000004",
+      "name": "Tool Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        80,
+        0
+      ],
+      "notes": "Last node of the sub-workflow: this is what the agent receives as the tool result.",
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f1",
+              "name": "ok",
+              "value": "={{ !$json.error }}",
+              "type": "boolean"
+            },
+            {
+              "id": "f2",
+              "name": "result",
+              "value": "={{ $json.error ? ('Failed: ' + ($json.error.message ?? JSON.stringify($json.error))) : ('Flex message sent to ' + $('Parse Flex').item.json.userId) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Parse Flex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Flex": {
+      "main": [
+        [
+          {
+            "node": "Push LINE Flex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push LINE Flex": {
+      "main": [
+        [
+          {
+            "node": "Tool Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
