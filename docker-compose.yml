@@ -1,4 +1,4 @@
-# n8n 2.39.5 + PostgreSQL 18
+# n8n 2.39.5 + PostgreSQL 18 (pgvector)
 #
 #   docker compose up -d
 #
@@ -9,7 +9,11 @@ name: line-ai-learning
 
 services:
   postgres:
-    image: postgres:18
+    # postgres:18 + the pgvector extension, used as the vector store for the
+    # RAG workflow (workflows/rag-gemini-pgvector.json). Same major version and
+    # PGDATA layout and Debian trixie base (glibc collation) as the official
+    # postgres:18 image, so db_storage is reused without a collation mismatch.
+    image: pgvector/pgvector:pg18-trixie
     container_name: n8n-postgres
     restart: unless-stopped
     environment:

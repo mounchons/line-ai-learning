@@ -1,0 +1,399 @@
+{
+  "id": "RagGeminiPgVec01",
+  "name": "RAG Gemini + PGVector",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "3ce626b7-6147-4877-a300-aae979f13aed",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1180,
+        -720
+      ],
+      "parameters": {
+        "width": 700,
+        "height": 560,
+        "color": 5,
+        "content": "## RAG: Gemini + PostgreSQL (pgvector)\nคลังความรู้จากเอกสารของเรา ให้ AI ตอบโดยอ้างอิงเอกสารเท่านั้น\n\nคู่มือเต็ม: `workflows/rag-gemini-pgvector.md`\n\n### 1) นำเข้าเอกสาร (แถวบน)\nเปิด Form **Upload Document** → อัปโหลด PDF / DOCX / TXT / MD / CSV → แยกทีละไฟล์ → ตัดเป็น chunk (1000 ตัวอักษร, overlap 200) → สร้าง embedding ด้วย Gemini → เก็บลงตาราง `rag_documents`\n\n### 2) ถามตอบ (แถวล่าง)\nChat → **RAG Agent** เรียก tool `Knowledge_Base` ค้น chunk ที่ใกล้เคียงที่สุด 5 อัน แล้วให้ Gemini ตอบจากข้อมูลนั้น ประวัติแชทเก็บใน `rag_chat_histories`\n\n### ต้องรู้\n- Postgres ต้องมี pgvector: compose ใช้ image `pgvector/pgvector:pg18-trixie`\n- Embeddings **ทั้งสองตัว** ต้องใช้ model เดียวกัน (`gemini-embedding-001`, 3072 มิติ) ถ้าเปลี่ยน ต้องลบตารางแล้วนำเข้าใหม่\n- อัปโหลดไฟล์ชื่อเดิมซ้ำ = chunk ซ้ำ ลบของเก่าก่อน (SQL ในคู่มือ)\n- Form ไม่มีการยืนยันตัวตน ใครรู้ URL ก็เพิ่มเอกสารได้ อย่าเปิดสู่ภายนอก"
+      }
+    },
+    {
+      "id": "ef2b12e3-3a2c-4547-9068-63896b1c818f",
+      "name": "Upload Document",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [
+        -1140,
+        -80
+      ],
+      "parameters": {
+        "formTitle": "นำเข้าเอกสารเข้าคลังความรู้",
+        "formDescription": "อัปโหลดไฟล์ PDF, DOCX, TXT, MD หรือ CSV ระบบจะตัดเป็นส่วนย่อย สร้าง embedding ด้วย Gemini และเก็บลง PostgreSQL",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "เอกสาร",
+              "fieldName": "documents",
+              "fieldType": "file",
+              "multipleFiles": true,
+              "acceptFileTypes": ".pdf,.docx,.txt,.md,.csv",
+              "requiredField": true
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {
+          "path": "rag-upload",
+          "buttonLabel": "นำเข้า",
+          "respondWithOptions": {
+            "values": {
+              "respondWith": "text",
+              "formSubmittedText": "นำเข้าเอกสารเรียบร้อยแล้ว ลองถามใน Chat ได้เลย"
+            }
+          }
+        }
+      },
+      "webhookId": "9786c4c2-44c1-4c0d-871e-54d472300013"
+    },
+    {
+      "id": "d1e3c5e4-9b3b-4fed-938b-c08998b56421",
+      "name": "Split Files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -900,
+        -80
+      ],
+      "parameters": {
+        "jsCode": "// One item per uploaded file with the binary under \"data\", so the\n// Default Data Loader can tag every chunk with its own file name.\nconst out = [];\nfor (const item of $input.all()) {\n  for (const [key, file] of Object.entries(item.binary ?? {})) {\n    out.push({\n      json: {\n        fileName: file.fileName ?? key,\n        mimeType: file.mimeType,\n        uploadedAt: new Date().toISOString(),\n      },\n      binary: { data: file },\n    });\n  }\n}\nreturn out;"
+      },
+      "notes": "Form file fields arrive as documents_0, documents_1, ... on one item. Splitting them lets the loader read a fixed key (data) and set source metadata per file."
+    },
+    {
+      "id": "7e9dd7c2-a581-45f0-8f56-b8dfb8783416",
+      "name": "Insert into PGVector",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.3,
+      "position": [
+        -640,
+        -80
+      ],
+      "parameters": {
+        "mode": "insert",
+        "tableName": "rag_documents",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "h0v30Ms8YyenwrFT",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "Creates the vector extension and the rag_documents table on first run."
+    },
+    {
+      "id": "407615a6-ae79-42a6-a3bf-1ada98657132",
+      "name": "Embeddings Gemini (insert)",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -720,
+        140
+      ],
+      "parameters": {
+        "modelName": "models/gemini-embedding-001"
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "vJ373ZTbDLrJbvUo",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      },
+      "notes": "Must be the same model as 'Embeddings Gemini (query)'."
+    },
+    {
+      "id": "485400db-a70a-4603-ad8d-ab2a6afcd336",
+      "name": "Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        -540,
+        140
+      ],
+      "parameters": {
+        "dataType": "binary",
+        "binaryMode": "specificField",
+        "binaryDataKey": "data",
+        "loader": "auto",
+        "textSplittingMode": "custom",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "source",
+                "value": "={{ $json.fileName }}"
+              },
+              {
+                "name": "mimeType",
+                "value": "={{ $json.mimeType }}"
+              },
+              {
+                "name": "uploadedAt",
+                "value": "={{ $json.uploadedAt }}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "3db621b4-7b92-438b-86b1-85d60c4eabd7",
+      "name": "Recursive Character Text Splitter",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        340
+      ],
+      "parameters": {
+        "chunkSize": 1000,
+        "chunkOverlap": 200,
+        "options": {}
+      }
+    },
+    {
+      "id": "119723ea-e7b1-4043-9654-010033c3ef1f",
+      "name": "When chat message received",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        -1140,
+        620
+      ],
+      "parameters": {
+        "options": {
+          "responseMode": "lastNode"
+        }
+      },
+      "webhookId": "203ab787-adc3-4120-87a5-cca9e94ae7ea"
+    },
+    {
+      "id": "d094a084-62be-4302-9fba-6ce57e498e9e",
+      "name": "RAG Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        -840,
+        620
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.chatInput }}",
+        "options": {
+          "systemMessage": "=You are a knowledge-base assistant. Answer ONLY from documents returned by the Knowledge_Base tool.\nToday is {{ $today.toFormat('yyyy-MM-dd') }}.\n\nRules\n- For every question about facts, policies, products or content, call Knowledge_Base first. Search with the key terms of the question; if the first search finds nothing relevant, try once more with different wording or synonyms (Thai and English).\n- Use only information that appears in the retrieved documents. Never answer from general knowledge or guess numbers, names or dates.\n- If the documents do not contain the answer, say ไม่พบข้อมูลนี้ในเอกสาร and suggest what document could be uploaded.\n- At the end of the answer, list the source file names you used as: ที่มา: <source>, <source> (from each document's metadata.source).\n- Greetings and small talk do not need the tool.\n\nLanguage\n- Reply in the same language as the user (Thai by default), concise and polite."
+        }
+      }
+    },
+    {
+      "id": "1075db08-05f6-4544-8bb0-2ec1823ce782",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -980,
+        860
+      ],
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash-lite",
+        "options": {}
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "vJ373ZTbDLrJbvUo",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "id": "0b8ffc48-c827-49f1-b7a0-fec4c459c150",
+      "name": "Postgres Chat Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.3,
+      "position": [
+        -820,
+        860
+      ],
+      "parameters": {
+        "tableName": "rag_chat_histories",
+        "contextWindowLength": 10
+      },
+      "credentials": {
+        "postgres": {
+          "id": "h0v30Ms8YyenwrFT",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "518e7419-f195-4963-bb5f-e981f360f667",
+      "name": "Knowledge Base",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.3,
+      "position": [
+        -600,
+        860
+      ],
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolDescription": "Search the knowledge base built from uploaded documents. Input is a search query; returns the most relevant text chunks with metadata.source (file name). Call this before answering any question about document content.",
+        "tableName": "rag_documents",
+        "topK": 5,
+        "includeDocumentMetadata": true,
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "h0v30Ms8YyenwrFT",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "4af0665f-0424-4e1f-88da-74717a9d4d31",
+      "name": "Embeddings Gemini (query)",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -600,
+        1060
+      ],
+      "parameters": {
+        "modelName": "models/gemini-embedding-001"
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "vJ373ZTbDLrJbvUo",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      },
+      "notes": "Must be the same model as 'Embeddings Gemini (insert)'."
+    }
+  ],
+  "connections": {
+    "Upload Document": {
+      "main": [
+        [
+          {
+            "node": "Split Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Files": {
+      "main": [
+        [
+          {
+            "node": "Insert into PGVector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Gemini (insert)": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Insert into PGVector",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Insert into PGVector",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recursive Character Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "RAG Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "RAG Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "RAG Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Knowledge Base": {
+      "ai_tool": [
+        [
+          {
+            "node": "RAG Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Gemini (query)": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Knowledge Base",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
